@@ -1,0 +1,187 @@
+package com.hw5;
+
+import com.example.cas765h5.R;
+import com.hw5.AccelData;
+
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.os.Vibrator;
+import android.app.Activity;
+import android.content.Context;
+import android.util.Log;
+import android.view.Menu;
+import android.view.View;
+import android.widget.Button;
+import android.widget.TextView;
+
+public class Main extends Activity implements SensorEventListener {
+	private TextView txtCount, textX, textY, textZ, textDetect;
+	private Button startBtn, resetBtn;
+	private boolean mInitialized, sensorRunning = false, climbing = false, descending = false;		// to initialize sensor only once
+	private SensorManager mSensorManager;
+	private Sensor mAccelerometer;
+	double mLastX, mLastY, mLastZ;
+	private final float NOISE = (float) 2.0;
+	int stepCount = 0, peakCount = 0;
+	LowPassFIR lowPassFIR_filter, lowPassFIR_integrate;
+	HighPassFIR highPassFIR;
+	double peak, valley, lastReading = 0.0, largestReading = 0.0;
+	Tool tool;
+	
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        
+        tool = new Tool();
+        mInitialized = false;
+        mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        
+        lowPassFIR_filter = new LowPassFIR(0.13);
+        lowPassFIR_integrate = new LowPassFIR(0.13);
+        
+        highPassFIR = new HighPassFIR(30, 0.9f);
+        
+        startBtn = (Button) findViewById(R.id.button1);
+        resetBtn = (Button) findViewById(R.id.button3);
+        
+        txtCount = (TextView)findViewById(R.id.txtCount);
+        textDetect = (TextView) findViewById(R.id.detect);
+        
+        txtCount.setText(String.valueOf(stepCount));
+        
+        textX = (TextView) findViewById(R.id.textX);
+        textY = (TextView) findViewById(R.id.textY);
+        textZ = (TextView) findViewById(R.id.textZ);
+
+        
+        //Start the counter
+        startBtn.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				if(!sensorRunning){
+					startSensor();
+					startBtn.setText("Stop");
+					sensorRunning = true;
+				} else {
+					stopSensor();
+					startBtn.setText("Start");
+					sensorRunning = false;
+					stepCount = 0;
+					Log.i("aaa", "LR: " + largestReading);
+				}
+			}
+		});
+        
+        //Reset the counter
+        resetBtn.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				stopSensor();
+				txtCount.setText("0");
+				startBtn.setText("Start");
+				textX.setText("X=");
+				textY.setText("Y=");
+				textZ.setText("Z=");
+				sensorRunning = false;
+				stepCount = 0;
+				
+			}
+		});
+    }
+
+    private void startSensor(){
+//    	 mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_NORMAL);
+    	 mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
+    }
+    
+    private void stopSensor(){
+    	mSensorManager.unregisterListener(this, mAccelerometer);
+    }
+    
+    public void onSensorChanged(SensorEvent event){
+    	// event object contains values of acceleration
+    	double x = event.values[0];
+    	double y = event.values[1];
+    	double z = event.values[2];
+    	
+    	final double alpha = 0.8;		// Constant for our filter below
+    	
+    	double[] gravity = {0,0,0};
+    	
+    	// Isolate the force of gravity with low-pass filter.
+    	gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
+    	gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
+    	gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
+    	
+    	// Remove gravity contribution with high-pass filter
+    	x = event.values[0] - gravity[0];
+    	y = event.values[1] - gravity[1];
+    	z = event.values[2] - gravity[2];
+    	
+    	if (!mInitialized){
+    		// Sensor is used for the first time, initialize the last read values
+    		mLastX = x;
+    		mLastY = y;
+    		mLastZ = z;
+    		mInitialized = true;
+    	} else {
+    		// Sensor already initialized, and we have previously read values.
+    		// Take difference of past and current values and decide which axis
+    		// acceleration was detected on by comparing values
+    		double deltaX = Math.abs(mLastX - x);
+    		double deltaY = Math.abs(mLastY - y);
+    		double deltaZ = Math.abs(mLastZ - z);
+    		
+    		if (deltaX < NOISE)
+    			deltaX = (float) 0.0;
+    		if (deltaY < NOISE)
+    			deltaY = (float) 0.0;
+    		if (deltaZ < NOISE)
+    			deltaZ = (float) 0.0;
+    		
+    		AccelData data = new AccelData(deltaX, deltaY, deltaZ);
+    		AccelData filtered_data = highPassFIR.transform(deltaX, deltaY, deltaZ);
+    		
+//    		data.setX(lowPassFIR_x.transform_2(deltaX));
+//    		data.setY(lowPassFIR_y.transform_2(deltaY));
+//    		data.setZ(lowPassFIR_z.transform_2(deltaZ));
+    		
+    		textX.setText("X="+data.getX());
+    		textY.setText("Y="+data.getY());
+    		textZ.setText("Z="+data.getZ());
+    		
+    		//double currentReading = tool.norm(data.getX(), data.getY(), data.getZ());
+    		double currentReading = lowPassFIR_integrate.integrate(lowPassFIR_filter.transform_2(tool.norm(deltaX, deltaY, deltaZ)));
+    		Log.i("aaa", lastReading + " ? " + currentReading);
+    		
+    		if (largestReading < currentReading){
+    			largestReading = currentReading;
+    		}
+    		
+    		if(currentReading > 0.32 && lastReading < currentReading){
+    			textDetect.setText("TH < " + currentReading);
+    			stepCount++;
+    			txtCount.setText(stepCount+"");
+    		}
+
+    		lastReading = currentReading;
+    		
+    	}
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+		// TODO Auto-generated method stub
+	}
+    
+}

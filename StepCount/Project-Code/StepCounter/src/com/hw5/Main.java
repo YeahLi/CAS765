@@ -1,0 +1,309 @@
+package com.hw5;
+
+import java.util.ArrayList;
+
+import com.hw5.AccelData;
+
+import android.graphics.Typeface;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.os.Bundle;
+import android.os.Vibrator;
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.Dialog;
+import android.content.Context;
+import android.content.DialogInterface;
+import android.text.InputType;
+import android.util.Log;
+import android.view.Menu;
+import android.view.View;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.TextView;
+import android.widget.Toast;
+
+public class Main extends Activity implements SensorEventListener {
+	private TextView txtCount, textPN, textVN;
+	private Button startBtn, resetBtn, calibrateBtn;
+	private boolean mInitialized, sensorRunning = false, climbing = true, descending = false;		// to initialize sensor only once
+	private boolean isCalibrating = false;
+	private ArrayList<Double> peak_list; //record the peak value
+	private ArrayList<Double> interval_list; //record the intervals between peaks and valleys
+	private SensorManager mSensorManager;
+	private Sensor mAccelerometer;
+	double mLastX, mLastY, mLastZ;
+	private final float NOISE = (float) 2.0;
+	int stepCount = 0, peakCount = 0, valleyCount = 0;
+	LowPassFIR lowPassFIR_filter, lowPassFIR_integrate;
+	HighPassFIR highPassFIR;
+	double peak, valley, lastReading = Double.MIN_VALUE, largestReading = 0.0;
+	Tool tool;
+	
+	final double defaultPeakTH = 0.0;
+	final double defaultIntervalTH = 0.16;
+	
+	double Peak_TH = defaultPeakTH;
+	double Interval_TH = defaultIntervalTH;
+	Long lastPeakTime = 0l;
+	double lastPeakValue = 0.0;
+	double lastValleyValue = 0.0;
+	
+	
+    @Override
+    protected void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
+        
+        tool = new Tool();
+        mInitialized = false;
+        mSensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+        
+        lowPassFIR_filter = new LowPassFIR(0.09);
+        lowPassFIR_integrate = new LowPassFIR(0.09);
+        
+        highPassFIR = new HighPassFIR(30, 0.9f);
+        
+        startBtn = (Button) findViewById(R.id.button1);
+        resetBtn = (Button) findViewById(R.id.button3);
+        calibrateBtn = (Button) findViewById(R.id.calibrateBtn);
+        
+        Typeface tf = Typeface.createFromAsset(getAssets(),"fonts/digital-7.ttf");
+        
+        txtCount = (TextView)findViewById(R.id.txtCount);
+        txtCount.setTypeface(tf);
+        
+        txtCount.setText(String.valueOf(stepCount));
+        
+        textPN = (TextView) findViewById(R.id.textX);
+        textVN = (TextView) findViewById(R.id.textY);
+
+        
+        //Start the counter
+        startBtn.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				if(!sensorRunning){
+					startSensor();
+					startBtn.setText("Stop");
+					sensorRunning = true;
+				} else {
+					stopSensor();
+					startBtn.setText("Start");
+					sensorRunning = false;
+					stepCount = 0;
+					Log.i("aaa", "LR: " + largestReading);
+				}
+			}
+		});
+        
+        calibrateBtn.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				if(!isCalibrating){
+					peak_list = new ArrayList<Double>();
+					interval_list = new ArrayList<Double>();
+					isCalibrating = true;
+					calibrateBtn.setText("Stop Calibration");
+					resetAll();
+					Toast.makeText(getApplicationContext(), "Take a few steps and count", Toast.LENGTH_SHORT).show();
+					startSensor();
+					startBtn.setEnabled(false);
+					resetBtn.setEnabled(false);
+					//define a container to collect data for calibrating
+					
+				} else {
+					//stop 
+					isCalibrating = false;
+					calibrateBtn.setText("Calibrate");
+					startBtn.setEnabled(true);
+					resetBtn.setEnabled(true);
+					stopSensor();
+					final EditText step_view = new EditText(Main.this);
+					step_view.setRawInputType(InputType.TYPE_CLASS_NUMBER);
+					
+					AlertDialog alertDialog = new AlertDialog.Builder(Main.this)
+				    .setTitle("Please enter your actual step numbers:")
+				    .setIcon(android.R.drawable.ic_dialog_info)
+				    .setView(step_view)
+					.setPositiveButton("Confirm",
+									new DialogInterface.OnClickListener() {
+										public void onClick(DialogInterface dialog,int which){
+											Log.i("hello",step_view.getText().toString());
+											int step_count = Integer.valueOf(step_view.getText().toString());
+											Peak_TH = tool.getThreshold(step_count, peak_list);
+											if( Double.isNaN(Peak_TH))
+												Peak_TH = defaultPeakTH;
+											
+											Interval_TH = tool.getThreshold(step_count, interval_list);
+											if( Double.isNaN(Interval_TH))
+												Interval_TH = defaultIntervalTH;
+										}
+									})
+				    .setNegativeButton("Cancel", null).show();
+					Toast.makeText(getApplicationContext(), "Calibration Complete", Toast.LENGTH_SHORT).show();
+					stepCount = 0;
+					txtCount.setText(String.valueOf(stepCount));
+				}
+			}
+		});
+        
+        //Reset the counter
+        resetBtn.setOnClickListener(new View.OnClickListener() {
+			public void onClick(View v) {
+				stopSensor();
+				resetAll();
+				resetCalibration();
+				
+			}
+		});
+    }
+
+    private void resetAll(){
+		stepCount = 0;
+		sensorRunning = false;
+		peakCount = 0;
+		valleyCount = 0;
+    	txtCount.setText(String.valueOf(stepCount));
+		startBtn.setText("Start");
+		textPN.setText("P_N=");
+		textVN.setText("V_N=");
+	//	textTH.setText("TH=");
+    }
+    
+    private void resetCalibration(){
+    	new AlertDialog.Builder(this)
+		.setTitle("Calibration Reset")
+		.setMessage("Would you like to reset the calibration as well?")
+		.setIcon(android.R.drawable.ic_dialog_alert)
+		.setPositiveButton(android.R.string.yes, new DialogInterface.OnClickListener() {
+
+		    public void onClick(DialogInterface dialog, int whichButton) {
+		        Toast.makeText(Main.this, "Calibration reset", Toast.LENGTH_SHORT).show();
+				Peak_TH = defaultPeakTH;
+				Interval_TH = defaultIntervalTH;
+		    }})
+		 .setNegativeButton(android.R.string.no, new DialogInterface.OnClickListener() {
+			
+			@Override
+			public void onClick(DialogInterface dialog, int which) {
+				// TODO Auto-generated method stub
+				Toast.makeText(Main.this, "Calibration not reset", Toast.LENGTH_SHORT).show();
+			}
+		}).show();
+    }
+    private void startSensor(){
+//    	 mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_NORMAL);
+    	 mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
+    }
+    
+    private void stopSensor(){
+    	mSensorManager.unregisterListener(this, mAccelerometer);
+    }
+    
+    public void onSensorChanged(SensorEvent event){
+   // 	textTH.setText("TH="+Double.toString(Peak_TH));
+    	// event object contains values of acceleration
+    	double x = event.values[0];
+    	double y = event.values[1];
+    	double z = event.values[2];
+    	
+    	final double alpha = 0.8;		// Constant for our filter below
+    	
+    	double[] gravity = {0,0,0};
+    	
+    	// Isolate the force of gravity with low-pass filter.
+    	gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
+    	gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
+    	gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
+    	
+    	// Remove gravity contribution with high-pass filter
+    	x = event.values[0] - gravity[0];
+    	y = event.values[1] - gravity[1];
+    	z = event.values[2] - gravity[2];
+    	
+    	if (!mInitialized){
+    		// Sensor is used for the first time, initialize the last read values
+    		mLastX = x;
+    		mLastY = y;
+    		mLastZ = z;
+    		mInitialized = true;
+    	} else {
+    		// Sensor already initialized, and we have previously read values.
+    		// Take difference of past and current values and decide which axis
+    		// acceleration was detected on by comparing values
+    		double deltaX = Math.abs(mLastX - x);
+    		double deltaY = Math.abs(mLastY - y);
+    		double deltaZ = Math.abs(mLastZ - z);
+    		
+    		if (deltaX < NOISE)
+    			deltaX = (float) 0.0;
+    		if (deltaY < NOISE)
+    			deltaY = (float) 0.0;
+    		if (deltaZ < NOISE)
+    			deltaZ = (float) 0.0;
+    		
+    		//AccelData data = new AccelData(deltaX, deltaY, deltaZ);
+    		//AccelData filtered_data = highPassFIR.transform(deltaX, deltaY, deltaZ);
+    		
+    		//double currentReading = tool.norm(data.getX(), data.getY(), data.getZ());
+    		double currentReading = lowPassFIR_integrate.integrate1(Math.pow((lowPassFIR_filter.transform_2(tool.norm(deltaX, deltaY, deltaZ))), 2));
+    		long currentTime = System.currentTimeMillis();
+    		
+    		Log.i("aaa", lastReading + " ? " + currentReading);
+    		
+    		if (largestReading < currentReading){
+    			largestReading = currentReading;
+    		}
+    		
+    		if(climbing && (lastReading > currentReading)){
+    			//Log.i("test", "" + (currentTime - lastPeakTime));
+    			if(isCalibrating){
+    				peak_list.add(lastReading);
+    				interval_list.add(lastReading - lastValleyValue);
+    			}
+    			peakCount++;
+    			textPN.setText("P_N=" + peakCount);
+    			
+    			if(lastReading > Peak_TH 
+    				&& ((currentTime - lastPeakTime) > 0)        //set the threshold of interval of peaks' timestamps
+    				&& (lastReading - lastValleyValue) > Interval_TH) //set the threshold of interval between peak and valley
+    				{
+    				stepCount++;
+    				txtCount.setText(String.valueOf(stepCount));
+    				}
+    			
+    			climbing = false;
+    			descending = true;
+    			lastPeakTime = currentTime;
+    			lastPeakValue = lastReading;
+    		}
+    		
+    		if(descending && lastReading < currentReading){
+    			climbing = true;
+    			descending = false;
+    			valleyCount++;
+    			textVN.setText("V_N=" + valleyCount);
+    			lastValleyValue = lastReading;
+    		}
+    		
+    		lastReading = currentReading;
+    		
+    		
+    	}
+    }
+    
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        // Inflate the menu; this adds items to the action bar if it is present.
+        getMenuInflater().inflate(R.menu.main, menu);
+        return true;
+    }
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+		// TODO Auto-generated method stub
+	}
+    
+}

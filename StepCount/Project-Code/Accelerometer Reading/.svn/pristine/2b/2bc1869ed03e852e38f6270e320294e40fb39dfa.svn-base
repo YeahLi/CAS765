@@ -1,0 +1,334 @@
+package com.smartapps.accel;
+
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileWriter;
+import java.net.URLEncoder;
+import java.util.ArrayList;
+
+import org.achartengine.ChartFactory;
+import org.achartengine.chart.PointStyle;
+import org.achartengine.model.XYMultipleSeriesDataset;
+import org.achartengine.model.XYSeries;
+import org.achartengine.renderer.XYMultipleSeriesRenderer;
+import org.achartengine.renderer.XYSeriesRenderer;
+
+import com.smartapps.accel.FIR;
+
+import android.app.Activity;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.Color;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
+import android.net.Uri;
+import android.os.Bundle;
+import android.os.Environment;
+import android.util.Log;
+import android.view.View;
+import android.view.View.OnClickListener;
+import android.widget.Button;
+import android.widget.LinearLayout;
+import android.widget.Toast;
+
+public class MainActivity extends Activity implements SensorEventListener,
+		OnClickListener {
+	private SensorManager sensorManager;
+	private Button btnStart, btnStop, btnUpload;
+	private boolean started = false;
+	private ArrayList<AccelData> sensorData;
+	private LinearLayout layout;
+	private View mChart;
+	XYMultipleSeriesDataset dataset;
+	FIR lowPassFIR_x, lowPassFIR_y, lowPassFIR_z;
+	private static final boolean ADAPTIVE_ACCEL_FILTER = true;
+	double lastAccel[] = new double[3];
+	double accelFilter[] = new double[3];
+	
+	@Override
+	public void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		setContentView(R.layout.activity_main);
+        lowPassFIR_x = new FIR(0.13);
+        lowPassFIR_y = new FIR(0.13);
+        lowPassFIR_z = new FIR(0.23);
+		layout = (LinearLayout) findViewById(R.id.chart_container);
+		sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+		sensorData = new ArrayList<AccelData>();
+
+		btnStart = (Button) findViewById(R.id.btnStart);
+		btnStop = (Button) findViewById(R.id.btnStop);
+		btnUpload = (Button) findViewById(R.id.btnUpload);
+		btnStart.setOnClickListener(this);
+		btnStop.setOnClickListener(this);
+		btnUpload.setOnClickListener(this);
+		btnStart.setEnabled(true);
+		btnStop.setEnabled(false);
+		if (sensorData == null || sensorData.size() == 0) {
+			btnUpload.setEnabled(false);
+		}
+
+	}
+
+	@Override
+	protected void onResume() {
+		super.onResume();
+
+	}
+
+	@Override
+	protected void onPause() {
+		super.onPause();
+		if (started == true) {
+			sensorManager.unregisterListener(this);
+		}
+	}
+
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int accuracy) {
+
+	}
+
+	
+	
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		if (started) {
+			double x = event.values[0];
+			double y = event.values[1];
+			double z = event.values[2];
+			long timestamp = System.currentTimeMillis();
+			
+			final double alpha = 0.8;		// Constant for our filter below
+	    	
+	    	double[] gravity = {0,0,0};
+	    	
+	    	// Isolate the force of gravity with low-pass filter.
+	    	gravity[0] = alpha * gravity[0] + (1 - alpha) * event.values[0];
+	    	gravity[1] = alpha * gravity[1] + (1 - alpha) * event.values[1];
+	    	gravity[2] = alpha * gravity[2] + (1 - alpha) * event.values[2];
+	    	
+	    	// Remove gravity contribution with high-pass filter
+	    	x = event.values[0] - gravity[0];
+	    	y = event.values[1] - gravity[1];
+	    	z = event.values[2] - gravity[2];
+	    	
+			AccelData data = new AccelData(timestamp, x, y, z);
+			sensorData.add(data);
+		}
+
+	}
+
+	@Override
+	public void onClick(View v) {
+		switch (v.getId()) {
+		case R.id.btnStart:
+			btnStart.setEnabled(false);
+			btnStop.setEnabled(true);
+			btnUpload.setEnabled(false);
+			sensorData = new ArrayList<AccelData>();
+			// save prev data if available
+			started = true;
+			Sensor accel = sensorManager
+					.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+			sensorManager.registerListener(this, accel,
+					SensorManager.SENSOR_DELAY_GAME);
+			break;
+		case R.id.btnStop:
+			btnStart.setEnabled(true);
+			btnStop.setEnabled(false);
+			btnUpload.setEnabled(true);
+			started = false;
+			sensorManager.unregisterListener(this);
+			layout.removeAllViews();
+			openChart();
+
+			// show data in chart
+			break;
+		case R.id.btnUpload:
+
+			String data = "X:\n";
+			for (AccelData element: sensorData){
+				data += element.x + " ";
+			}
+			
+			data += "\n\nY:\n";
+			for (AccelData element: sensorData){
+				data += element.y + " ";
+			}
+			
+			data += "\n\nZ:\n";
+			for (AccelData element: sensorData){
+				data += element.z + " ";
+			}
+			
+			try {
+			  FileWriter fWriter;
+			  File sdCardFile = new File(Environment.getExternalStorageDirectory() + "/sensors.txt");
+			  Log.d ("TAG", sdCardFile.getPath());
+	
+			  fWriter = new FileWriter(sdCardFile, true);
+			  fWriter.write(data);
+			  fWriter.flush();
+			  fWriter.close();
+			  
+		/*	  String fileName = URLEncoder.encode(file, "UTF-8");
+		      String PATH =  Environment.getExternalStorageDirectory()+"/"+fileName.trim().toString();
+		      Uri uri = Uri.parse("file://"+PATH);
+		      
+		      Intent i = new Intent(Intent.ACTION_SEND);
+		      i.setType("text/plain");
+			  i.putExtra(Intent.EXTRA_EMAIL  , new String[]{"xuq007@gmail.com"});
+			  i.putExtra(Intent.EXTRA_SUBJECT, "Accelerometer Dataset");
+			  i.putExtra(Intent.EXTRA_TEXT   , "");
+			  i.putExtra(Intent.EXTRA_STREAM, uri);
+			  startActivity(Intent.createChooser(i, "Send mail..."));
+		      */
+			} catch (Exception e) {
+			  e.printStackTrace();
+			  Toast.makeText(MainActivity.this, "There are no email clients installed.", Toast.LENGTH_SHORT).show();
+			}
+
+			break;
+		default:
+			break;
+		}
+	}
+	
+	public double norm(double x, double y, double z){
+		double res = (x*x)+(y*y)+(z*z);
+		return Math.sqrt(res);
+	}
+	
+	public double clamp(double v, double min, double max){
+		if(v > max)
+			return max;
+		else if (v < min)
+			return min;
+		else 
+			return v;
+	}
+	
+	public AccelData highPassFilter(double accelX, double accelY, double accelZ){
+		// high pass filter
+	    float updateFreq = 50f; // match this to your update speed
+	    float cutOffFreq = 3f;
+	    float RC = 1.0f / cutOffFreq;
+	    float dt = 1.0f / updateFreq;
+	    float filterConstant = RC / (dt + RC);
+	    float alpha = filterConstant; 
+	    float kAccelerometerMinStep = 0.033f;
+	    float kAccelerometerNoiseAttenuation = 3.0f;
+
+	    if(ADAPTIVE_ACCEL_FILTER)
+	    {
+	        float d = (float) clamp(Math.abs(norm(accelFilter[0], accelFilter[1], accelFilter[2]) - norm(accelX, accelY, accelZ)) / kAccelerometerMinStep - 1.0f, 0.0f, 1.0f);
+	        alpha = d * filterConstant / kAccelerometerNoiseAttenuation + (1.0f - d) * filterConstant;
+	    }
+
+	    accelFilter[0] = (float) (alpha * (accelFilter[0] + accelX - lastAccel[0]));
+	    accelFilter[1] = (float) (alpha * (accelFilter[1] + accelY - lastAccel[1]));
+	    accelFilter[2] = (float) (alpha * (accelFilter[2] + accelZ - lastAccel[2]));
+
+	    lastAccel[0] = accelX;
+	    lastAccel[1] = accelY;
+	    lastAccel[2] = accelZ;
+	    
+	    AccelData accel = new AccelData(0, accelFilter[0], accelFilter[1], accelFilter[2]);
+
+	    return accel;
+	}
+
+	private void openChart() {
+		if (sensorData != null || sensorData.size() > 0) {
+			long t = sensorData.get(0).getTimestamp();
+			dataset = new XYMultipleSeriesDataset();
+
+			XYSeries xSeries = new XYSeries("X");
+			XYSeries ySeries = new XYSeries("Y");
+			XYSeries zSeries = new XYSeries("Z");
+            Tool tool = new Tool();
+			for (AccelData data : sensorData) {
+				AccelData filtered_data = new AccelData (0, data.getX(), data.getY(), data.getZ());
+
+				filtered_data = highPassFilter(data.getX(), data.getY(), data.getZ());
+//				xSeries.add(data.getTimestamp() - t, lowPassFIR_x.transform_1(filtered_data.getX()));
+//				ySeries.add(data.getTimestamp() - t, lowPassFIR_y.transform_1(filtered_data.getY()));
+//				zSeries.add(data.getTimestamp() - t, lowPassFIR_z.transform_1(filtered_data.getZ()));
+				
+//				xSeries.add(data.getTimestamp() - t, lowPassFIR_x.transform_2(filtered_data.getX()));
+//				ySeries.add(data.getTimestamp() - t, lowPassFIR_y.transform_2(filtered_data.getY()));
+//				zSeries.add(data.getTimestamp() - t, lowPassFIR_z.transform_2(filtered_data.getZ()));
+				
+//				xSeries.add(data.getTimestamp() - t, filtered_data.getX());
+//				ySeries.add(data.getTimestamp() - t, filtered_data.getY());
+//				zSeries.add(data.getTimestamp() - t, filtered_data.getZ());
+				
+//				xSeries.add(data.getTimestamp() - t, lowPassFIR_x.transform_1(data.getX()));
+//				ySeries.add(data.getTimestamp() - t, lowPassFIR_y.transform_1(data.getY()));
+//				zSeries.add(data.getTimestamp() - t, lowPassFIR_z.transform_1(data.getZ()));
+				
+//				xSeries.add(data.getTimestamp() - t, lowPassFIR_x.transform_2(data.getX()));
+//				ySeries.add(data.getTimestamp() - t, lowPassFIR_y.transform_2(data.getY()));
+//				zSeries.add(data.getTimestamp() - t, lowPassFIR_z.transform_2(data.getZ()));
+				xSeries.add(data.getTimestamp() - t, lowPassFIR_y.integrate(lowPassFIR_x.transform_2(tool.norm(data.getX(), data.getY(), data.getZ()))));
+			}
+
+			dataset.addSeries(xSeries);
+			dataset.addSeries(ySeries);
+			dataset.addSeries(zSeries);
+			
+			XYSeriesRenderer xRenderer = new XYSeriesRenderer();
+			xRenderer.setColor(Color.RED);
+			xRenderer.setPointStyle(PointStyle.CIRCLE);
+			xRenderer.setFillPoints(true);
+			xRenderer.setLineWidth(1);
+			xRenderer.setDisplayChartValues(false);
+
+			XYSeriesRenderer yRenderer = new XYSeriesRenderer();
+			yRenderer.setColor(Color.GREEN);
+			yRenderer.setPointStyle(PointStyle.CIRCLE);
+			yRenderer.setFillPoints(true);
+			yRenderer.setLineWidth(1);
+			yRenderer.setDisplayChartValues(false);
+
+			XYSeriesRenderer zRenderer = new XYSeriesRenderer();
+			zRenderer.setColor(Color.BLUE);
+			zRenderer.setPointStyle(PointStyle.CIRCLE);
+			zRenderer.setFillPoints(true);
+			zRenderer.setLineWidth(1);
+			zRenderer.setDisplayChartValues(false);
+
+			XYMultipleSeriesRenderer multiRenderer = new XYMultipleSeriesRenderer();
+			multiRenderer.setXLabels(0);
+			multiRenderer.setLabelsColor(Color.RED);
+			multiRenderer.setChartTitle("t vs (x,y,z)");
+			multiRenderer.setXTitle("Sensor Data");
+			multiRenderer.setYTitle("Values of Acceleration");
+			multiRenderer.setZoomButtonsVisible(true);
+			for (int i = 0; i < sensorData.size(); i++) {
+				
+				multiRenderer.addXTextLabel(i + 1, ""
+						+ (sensorData.get(i).getTimestamp() - t));
+			}
+			for (int i = 0; i < 12; i++) {
+				multiRenderer.addYTextLabel(i + 1, ""+i);
+			}
+
+			multiRenderer.addSeriesRenderer(xRenderer);
+			multiRenderer.addSeriesRenderer(yRenderer);
+			multiRenderer.addSeriesRenderer(zRenderer);
+
+			// Creating a Line Chart
+			mChart = ChartFactory.getLineChartView(getBaseContext(), dataset,
+					multiRenderer);
+
+			// Adding the Line Chart to the LinearLayout
+			layout.addView(mChart);
+
+		}
+	}
+
+}

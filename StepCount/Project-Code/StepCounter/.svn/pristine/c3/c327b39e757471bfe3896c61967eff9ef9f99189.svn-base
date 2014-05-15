@@ -1,0 +1,80 @@
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:paddingBottom="@dimen/activity_vertical_margin"
+    android:paddingLeft="@dimen/activity_horizontal_margin"
+    android:paddingRight="@dimen/activity_horizontal_margin"
+    android:paddingTop="@dimen/activity_vertical_margin"
+    tools:context=".Main" >
+
+    <TextView
+        android:id="@+id/txtCount"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_centerHorizontal="true"
+        android:text="0"
+        android:textAppearance="?android:attr/textAppearanceLarge"
+        android:textSize="145sp" />
+
+    <Button
+        android:id="@+id/button3"
+        android:layout_width="100sp"
+        android:layout_height="wrap_content"
+        android:layout_centerVertical="true"
+        android:layout_toRightOf="@+id/txtCount"
+        android:text="Reset" />
+
+    <Button
+        android:id="@+id/button1"
+        android:layout_width="100sp"
+        android:layout_height="wrap_content"
+        android:layout_alignBaseline="@+id/button3"
+        android:layout_alignBottom="@+id/button3"
+        android:layout_alignParentLeft="true"
+        android:layout_marginLeft="25dp"
+        android:text="Start" />
+
+    <TextView
+        android:id="@+id/textX"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignLeft="@+id/button1"
+        android:layout_alignRight="@+id/button1"
+        android:layout_below="@+id/button1"
+        android:layout_marginTop="81dp"
+        android:text="X="
+        android:textColor="#0000FF" />
+
+    <TextView
+        android:id="@+id/textY"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignLeft="@+id/textX"
+        android:layout_alignRight="@+id/textX"
+        android:layout_below="@+id/textX"
+        android:layout_marginTop="10dp"
+        android:text="Y="
+        android:textColor="#0000FF" />
+
+    <TextView
+        android:id="@+id/textZ"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignLeft="@+id/textY"
+        android:layout_alignRight="@+id/textX"
+        android:layout_below="@+id/textY"
+        android:layout_marginTop="13dp"
+        android:text="Z="
+        android:textColor="#0000FF" />
+
+    <TextView
+        android:id="@+id/detect"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignRight="@+id/button3"
+        android:layout_alignTop="@+id/textX"
+        android:text="Medium Text"
+        android:textAppearance="?android:attr/textAppearanceMedium" />
+
+</RelativeLayout>
